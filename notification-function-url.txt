@@ -1,0 +1,1 @@
+https://us-central1-nomad-nation-62331.cloudfunctions.net/sendNotification

@@ -7,7 +7,7 @@ set -e
 
 # Configuration
 FUNCTION_NAME="sendNotification"
-RUNTIME="nodejs18"
+RUNTIME="nodejs20"
 REGION="us-central1"
 MEMORY="512MB"
 TIMEOUT="60s"
@@ -33,35 +33,40 @@ if ! command -v npm &> /dev/null; then
     exit 1
 fi
 
-# Check if .env file exists
-if [ ! -f .env ]; then
-    echo -e "${YELLOW}⚠️  .env file not found. Please create one from env.example${NC}"
-    echo "cp env.example .env"
-    echo "Then update it with your Firebase and SendGrid credentials."
-    exit 1
-fi
+# Get current Google Cloud project
+GOOGLE_CLOUD_PROJECT=$(gcloud config get-value project 2>/dev/null)
 
-# Load environment variables
-source .env
-
-# Validate required environment variables
 if [ -z "$GOOGLE_CLOUD_PROJECT" ]; then
-    echo -e "${RED}❌ GOOGLE_CLOUD_PROJECT is not set in .env file${NC}"
+    echo -e "${RED}❌ No Google Cloud project is set. Please run: gcloud config set project YOUR_PROJECT_ID${NC}"
     exit 1
 fi
 
-if [ -z "$FIREBASE_PROJECT_ID" ]; then
-    echo -e "${RED}❌ FIREBASE_PROJECT_ID is not set in .env file${NC}"
-    exit 1
+# Check if .env file exists for SendGrid configuration
+if [ -f .env ]; then
+    echo -e "${GREEN}✅ Loading environment variables from .env${NC}"
+    # Use set +e to prevent script from exiting on .env errors
+    set +e
+    source .env 2>/dev/null || echo -e "${YELLOW}⚠️  Warning: Some lines in .env file could not be processed${NC}"
+    set -e
+    
+    if [ -z "$SENDGRID_API_KEY" ]; then
+        echo -e "${YELLOW}⚠️  SENDGRID_API_KEY is not set. Email fallback will not work.${NC}"
+    fi
+else
+    echo -e "${YELLOW}⚠️  .env file not found. Email notifications will not work without SendGrid configuration.${NC}"
+    echo -e "${BLUE}💡 To enable email notifications, create a .env file with:${NC}"
+    echo "SENDGRID_API_KEY=your_api_key_here"
+    echo "SENDGRID_FROM_EMAIL=your_verified_email@domain.com"
+    echo "SENDGRID_FROM_NAME=Your App Name"
+    
+    # Set empty values to prevent deployment errors
+    SENDGRID_API_KEY=""
+    SENDGRID_FROM_EMAIL=""
+    SENDGRID_FROM_NAME=""
 fi
 
-if [ -z "$SENDGRID_API_KEY" ]; then
-    echo -e "${YELLOW}⚠️  SENDGRID_API_KEY is not set. Email fallback will not work.${NC}"
-fi
-
-echo -e "${GREEN}✅ Environment variables loaded${NC}"
+echo -e "${GREEN}✅ Configuration loaded${NC}"
 echo -e "${YELLOW}📋 Project: ${GOOGLE_CLOUD_PROJECT}${NC}"
-echo -e "${YELLOW}📋 Firebase Project: ${FIREBASE_PROJECT_ID}${NC}"
 echo -e "${YELLOW}📋 Region: ${REGION}${NC}"
 
 # Build the project
@@ -81,20 +86,20 @@ echo -e "${YELLOW}🚀 Deploying Notification Cloud Function...${NC}"
 gcloud functions deploy $FUNCTION_NAME \
     --runtime=$RUNTIME \
     --region=$REGION \
-    --source=dist \
+    --source=. \
     --entry-point=$ENTRY_POINT \
     --trigger-http \
     --memory=$MEMORY \
     --timeout=$TIMEOUT \
     --allow-unauthenticated \
-    --set-env-vars=GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT,FIREBASE_PROJECT_ID=$FIREBASE_PROJECT_ID
+    --update-env-vars=SENDGRID_API_KEY="$SENDGRID_API_KEY",SENDGRID_FROM_EMAIL="$SENDGRID_FROM_EMAIL",SENDGRID_FROM_NAME="$SENDGRID_FROM_NAME"
 
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}✅ Deployment successful!${NC}"
     echo -e "${GREEN}🎉 Your notification service is now live!${NC}"
     
     # Get function URL
-    FUNCTION_URL=$(gcloud functions describe $FUNCTION_NAME --region=$REGION --format="value(httpsTrigger.url)")
+    FUNCTION_URL=$(gcloud functions describe $FUNCTION_NAME --region=$REGION --format="value(url)")
     if [ ! -z "$FUNCTION_URL" ]; then
         echo -e "${GREEN}🌐 Function URL: ${FUNCTION_URL}${NC}"
         

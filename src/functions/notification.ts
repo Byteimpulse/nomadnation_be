@@ -2,20 +2,14 @@ import { Request, Response } from '@google-cloud/functions-framework';
 import * as admin from 'firebase-admin';
 import sgMail from '@sendgrid/mail';
 import { config } from 'dotenv';
-import * as path from 'path';
 
 // Load environment variables
 config();
 
-// Import Firebase service account key
-const serviceAccount = require(path.join(__dirname, '../../firebase-adminsdk.json'));
-
 // Initialize Firebase Admin SDK for FCM
 try {
   if (admin.apps.length === 0) {
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-    });
+    admin.initializeApp();
   }
 } catch (error) {
   console.error('Failed to initialize Firebase Admin SDK:', error);
