@@ -2,32 +2,20 @@ import { Request, Response } from '@google-cloud/functions-framework';
 import * as admin from 'firebase-admin';
 import sgMail from '@sendgrid/mail';
 import { config } from 'dotenv';
+import * as path from 'path';
 
 // Load environment variables
 config();
 
-// Initialize Firebase Admin SDK for FCM
-let firebaseApp: admin.app.App;
+// Import Firebase service account key
+const serviceAccount = require(path.join(__dirname, '../../firebase-adminsdk.json'));
 
+// Initialize Firebase Admin SDK for FCM
 try {
   if (admin.apps.length === 0) {
-    const projectId = process.env['FIREBASE_PROJECT_ID'];
-    const privateKey = process.env['FIREBASE_PRIVATE_KEY'];
-    const clientEmail = process.env['FIREBASE_CLIENT_EMAIL'];
-    
-    if (!projectId || !privateKey || !clientEmail) {
-      throw new Error('Missing required Firebase environment variables');
-    }
-    
-    firebaseApp = admin.initializeApp({
-      credential: admin.credential.cert({
-        projectId,
-        privateKey: privateKey.replace(/\\n/g, '\n'),
-        clientEmail,
-      }),
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
     });
-  } else {
-    firebaseApp = admin.app();
   }
 } catch (error) {
   console.error('Failed to initialize Firebase Admin SDK:', error);
@@ -353,7 +341,6 @@ async function updateUserNotificationTimestamp(uid: string): Promise<void> {
   }
 }
 
-// Export for testing
 export { 
   getUserDeviceInfo, 
   sendFCMPushNotification, 

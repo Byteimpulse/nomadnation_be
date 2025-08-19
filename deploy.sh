@@ -76,7 +76,7 @@ echo -e "${YELLOW}🚀 Deploying Cloud Function...${NC}"
 gcloud functions deploy $FUNCTION_NAME \
     --runtime=$RUNTIME \
     --region=$REGION \
-    --source=dist \
+    --source=. \
     --entry-point=$ENTRY_POINT \
     --trigger-event=google.storage.object.finalize \
     --trigger-resource=$STORAGE_BUCKET_NAME \

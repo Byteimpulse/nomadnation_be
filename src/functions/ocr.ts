@@ -1,4 +1,4 @@
-import { CloudFunction, CloudEvent } from '@google-cloud/functions-framework';
+import { CloudEvent } from '@google-cloud/functions-framework';
 import { ImageAnnotatorClient } from '@google-cloud/vision';
 import { Firestore } from '@google-cloud/firestore';
 import { Storage } from '@google-cloud/storage';
@@ -15,10 +15,10 @@ const storage = new Storage();
 const pubsub = new PubSub();
 
 // Environment variables
-const PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT;
-const COLLECTION_NAME = process.env.FIRESTORE_COLLECTION_PASSPORTS || 'passports';
-const BUCKET_NAME = process.env.STORAGE_BUCKET_NAME;
-const TOPIC_NAME = process.env.PUBSUB_TOPIC_NAME || 'ocr-retry-topic';
+// const PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT;
+const COLLECTION_NAME = process.env['FIRESTORE_COLLECTION_PASSPORTS'] || 'passports';
+// const BUCKET_NAME = process.env.STORAGE_BUCKET_NAME;
+const TOPIC_NAME = process.env['PUBSUB_TOPIC_NAME'] || 'ocr-retry-topic';
 
 interface StorageEvent {
   bucket: string;
@@ -54,16 +54,36 @@ interface ProcessedResult {
  * Cloud Function triggered by Storage finalize event
  * Processes passport images using Google Vision API and saves MRZ data to Firestore
  */
-export const processPassportImage: CloudFunction<CloudEvent<StorageEvent>> = async (
-  cloudEvent
+export const processPassportImage = async (
+  cloudEvent: CloudEvent<StorageEvent>
 ) => {
+  console.log('Received cloud event:', JSON.stringify(cloudEvent, null, 2));
+  
   try {
-    const { bucket, name: fileName, contentType } = cloudEvent.data;
+    // Handle both 1st and 2nd gen Cloud Functions event structures
+    let eventData: StorageEvent;
+    
+    if (cloudEvent.data) {
+      eventData = cloudEvent.data;
+    } else {
+      // For 2nd gen, the event data might be at the root level
+      eventData = cloudEvent as any;
+    }
+    
+    if (!eventData || !eventData.bucket || !eventData.name) {
+      throw new Error('Invalid storage event data');
+    }
+    
+    const { bucket, name: fileName, contentType } = eventData;
+    
+    if (!fileName) {
+      throw new Error('No file name in storage event');
+    }
     
     console.log(`Processing passport image: ${fileName} from bucket: ${bucket}`);
     
     // Validate file type
-    if (!contentType.startsWith('image/')) {
+    if (!contentType || !contentType.startsWith('image/')) {
       throw new Error(`Invalid file type: ${contentType}. Expected image file.`);
     }
     
@@ -74,7 +94,11 @@ export const processPassportImage: CloudFunction<CloudEvent<StorageEvent>> = asy
     }
     
     const uid = pathParts[0];
-    const docId = pathParts[1].replace(/\.[^/.]+$/, ''); // Remove file extension
+    const docId = pathParts[1]?.replace(/\.[^/.]+$/, '') || ''; // Remove file extension
+    
+    if (!uid || !docId) {
+      throw new Error(`Unable to extract user ID or document ID from path: ${fileName}`);
+    }
     
     console.log(`User ID: ${uid}, Document ID: ${docId}`);
     
@@ -101,7 +125,10 @@ export const processPassportImage: CloudFunction<CloudEvent<StorageEvent>> = asy
     console.error('Error processing passport image:', error);
     
     // Send to retry queue via Pub/Sub
-    await sendToRetryQueue(cloudEvent.data, error);
+    const storageEventData = cloudEvent.data || (cloudEvent as any);
+    if (storageEventData && storageEventData.bucket && storageEventData.name) {
+      await sendToRetryQueue(storageEventData, error instanceof Error ? error : new Error(String(error)));
+    }
     
     throw error;
   }
@@ -123,7 +150,7 @@ async function extractMRZFromImage(imageBuffer: Buffer): Promise<PassportMRZ> {
     }
     
     // Extract MRZ lines (typically last 2-3 lines of passport)
-    const fullText = detections[0].description || '';
+    const fullText = detections[0]?.description || '';
     const lines = fullText.split('\n').filter(line => line.trim().length > 0);
     
     // Find MRZ lines (typically contain 44 characters per line)
@@ -143,7 +170,7 @@ async function extractMRZFromImage(imageBuffer: Buffer): Promise<PassportMRZ> {
     
   } catch (error) {
     console.error('Error extracting MRZ from image:', error);
-    throw new Error(`Failed to extract MRZ: ${error.message}`);
+    throw new Error(`Failed to extract MRZ: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -191,7 +218,7 @@ function parseMRZData(mrzLines: string[]): PassportMRZ {
     
   } catch (error) {
     console.error('Error parsing MRZ data:', error);
-    throw new Error(`Failed to parse MRZ data: ${error.message}`);
+    throw new Error(`Failed to parse MRZ data: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -218,7 +245,7 @@ async function saveToFirestore(uid: string, docId: string, mrzData: PassportMRZ)
     
   } catch (error) {
     console.error('Error saving to Firestore:', error);
-    throw new Error(`Failed to save to Firestore: ${error.message}`);
+    throw new Error(`Failed to save to Firestore: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -245,5 +272,4 @@ async function sendToRetryQueue(storageEvent: StorageEvent, error: Error): Promi
   }
 }
 
-// Export for testing
 export { extractMRZFromImage, parseMRZData, saveToFirestore, sendToRetryQueue };
